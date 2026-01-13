@@ -12,6 +12,7 @@ import Iter "mo:base/Iter";
 
 import Address "address";
 import Types "types";
+import ScriptBuilder "script_builder";
 
 module {
 
@@ -234,5 +235,95 @@ module {
         "\"gas\":" # Nat64.toText(tx.gas) # "," #
         "\"payload\":\"" # tx.payload # "\"" #
         "}}"
+    };
+
+    /// Build a P2SH commit transaction
+    /// Creates a transaction that outputs to a P2SH address
+    ///
+    /// @param utxo - Input UTXO to spend
+    /// @param p2sh_script - The P2SH scriptPublicKey (hex) from ScriptBuilder.buildP2SHCommit
+    /// @param output_amount - Amount to send to P2SH (in sompi)
+    /// @param fee - Transaction fee (in sompi)
+    /// @param change_script - scriptPublicKey for change (sender's address)
+    /// @return Kaspa transaction
+    public func build_p2sh_commit_transaction(
+        utxo: Types.UTXO,
+        p2sh_script: Text,
+        output_amount: Nat64,
+        fee: Nat64,
+        change_script: Text
+    ) : Types.KaspaTransaction {
+        build_transaction(utxo, p2sh_script, output_amount, fee, change_script)
+    };
+
+    /// Build a P2SH reveal (spending) transaction
+    /// Spends from a P2SH output by providing the redeem script
+    ///
+    /// @param p2sh_input - P2SH input containing UTXO, redeem script, and signature
+    /// @param outputs - Transaction outputs
+    /// @return Kaspa transaction with P2SH signature script
+    public func build_p2sh_reveal_transaction(
+        p2sh_input: Types.P2SHInput,
+        outputs: [Types.TransactionOutput]
+    ) : Types.KaspaTransaction {
+        // Build the signature script: <signature> <redeemScript>
+        let sigScript = ScriptBuilder.buildP2SHSignatureScript(
+            p2sh_input.signature,
+            p2sh_input.redeemScript
+        );
+
+        let sigScriptHex = ScriptBuilder.bytesToHex(sigScript);
+
+        {
+            version = 0;
+            inputs = [
+                {
+                    previousOutpoint = {
+                        transactionId = p2sh_input.utxo.transactionId;
+                        index = p2sh_input.utxo.index;
+                    };
+                    signatureScript = sigScriptHex;
+                    sequence = 0;
+                    sigOpCount = 1;
+                }
+            ];
+            outputs = outputs;
+            lockTime = 0;
+            subnetworkId = "0000000000000000000000000000000000000000";
+            gas = 0;
+            payload = "";
+        }
+    };
+
+    /// Helper to update a transaction's signature script
+    /// Used after signing to add the signature to the transaction
+    ///
+    /// @param tx - Transaction to update
+    /// @param signatureScript - Hex-encoded signature script
+    /// @return Updated transaction
+    public func set_signature_script(
+        tx: Types.KaspaTransaction,
+        signatureScript: Text
+    ) : Types.KaspaTransaction {
+        if (tx.inputs.size() == 0) {
+            return tx;
+        };
+
+        let updated_input = {
+            previousOutpoint = tx.inputs[0].previousOutpoint;
+            signatureScript = signatureScript;
+            sequence = tx.inputs[0].sequence;
+            sigOpCount = tx.inputs[0].sigOpCount;
+        };
+
+        {
+            version = tx.version;
+            inputs = [updated_input];
+            outputs = tx.outputs;
+            lockTime = tx.lockTime;
+            subnetworkId = tx.subnetworkId;
+            gas = tx.gas;
+            payload = tx.payload;
+        }
     };
 };

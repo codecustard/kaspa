@@ -39,4 +39,12 @@ module Types {
     scriptVersion: Nat16;
     address: Text;
   };
+
+  /// P2SH Input for spending P2SH outputs
+  /// Used in the reveal transaction of the commit-reveal pattern
+  public type P2SHInput = {
+    utxo: UTXO;               // The P2SH UTXO to spend
+    redeemScript: [Nat8];     // The redeem script that hashes to the P2SH address
+    signature: [Nat8];        // Signature over the transaction
+  };
 }
