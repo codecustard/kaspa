@@ -69,9 +69,8 @@ module {
         c ^ 1
     };
 
-    private func createChecksum(payload : [Nat8]) : [Nat8] {
-        let prefix : [Nat8] = [107, 97, 115, 112, 97]; // "kaspa"
-        let mod : Nat64 = polymod(prefix, payload);
+    private func createChecksum(payload : [Nat8], prefix_bytes : [Nat8]) : [Nat8] {
+        let mod : Nat64 = polymod(prefix_bytes, payload);
         let checksum = Buffer.Buffer<Nat8>(8);
         for (i in Iter.range(0, 7)) {
             let value = Nat8.fromNat(Nat64.toNat((mod >> Nat64.fromNat(5 * (7 - i))) & 0x1f));
@@ -116,7 +115,7 @@ module {
         #ok(Buffer.toArray<Nat8>(out))
     };
 
-    private func cashaddrEncode(payload_bytes : [Nat8], version : Nat) : Result<Text> {
+    private func cashaddrEncode(payload_bytes : [Nat8], version : Nat, prefix : Text) : Result<Text> {
         let version_byte : Nat8 = switch (version) {
             case (0) 0; // SCHNORR
             case (1) 1; // ECDSA
@@ -126,6 +125,9 @@ module {
             };
         };
 
+        // Convert prefix to bytes for checksum calculation
+        let prefix_bytes = Blob.toArray(Text.encodeUtf8(prefix));
+
         let data = Buffer.Buffer<Nat8>(payload_bytes.size() + 1);
         data.add(version_byte);
         data.append(Buffer.fromArray(payload_bytes));
@@ -134,7 +136,7 @@ module {
         switch (convertBits(data_array, 8, 5, true)) {
             case (#err(error)) { #err(error) };
             case (#ok(converted)) {
-                let checksum = createChecksum(converted);
+                let checksum = createChecksum(converted, prefix_bytes);
                 let combined = Array.append(converted, checksum);
                 let result = Buffer.Buffer<Char>(combined.size());
 
@@ -193,10 +195,41 @@ module {
             case (#ok(pubkey_bytes)) {
 
                 // Generate address
-                switch (cashaddrEncode(pubkey_bytes, addr_type)) {
+                switch (cashaddrEncode(pubkey_bytes, addr_type, "kaspa")) {
                     case (#err(error)) { return #err(error) };
                     case (#ok(encoded)) {
                         let address = "kaspa:" # encoded;
+
+                        // Generate script public key
+                        switch (generateScriptPublicKey(pubkey_bytes, addr_type)) {
+                            case (#err(error)) { return #err(error) };
+                            case (#ok(script)) {
+                                #ok({
+                                    address = address;
+                                    addr_type = addr_type;
+                                    payload = pubkey_bytes;
+                                    script_public_key = script;
+                                })
+                            };
+                        };
+                    };
+                };
+            };
+        };
+    };
+
+    // Generate Kaspa address with custom prefix (for testnet/devnet)
+    public func generateAddressWithPrefix(pubkey : Blob, addr_type : Nat, prefix : Text) : Result<AddressInfo> {
+        // Validate public key
+        switch (validatePublicKey(pubkey, addr_type)) {
+            case (#err(error)) { return #err(error) };
+            case (#ok(pubkey_bytes)) {
+
+                // Generate address
+                switch (cashaddrEncode(pubkey_bytes, addr_type, prefix)) {
+                    case (#err(error)) { return #err(error) };
+                    case (#ok(encoded)) {
+                        let address = prefix # ":" # encoded;
 
                         // Generate script public key
                         switch (generateScriptPublicKey(pubkey_bytes, addr_type)) {
@@ -223,16 +256,29 @@ module {
             return #err(Errors.invalidAddress("Address cannot be empty"));
         };
 
-        if (not Text.startsWith(address, #text("kaspa:"))) {
-            return #err(Errors.invalidAddress("Address must start with 'kaspa:' prefix"));
+        if (not Text.startsWith(address, #text("kaspa:")) and not Text.startsWith(address, #text("kaspatest:"))) {
+            return #err(Errors.invalidAddress("Address must start with 'kaspa:' or 'kaspatest:' prefix"));
         };
 
         // Core address decoding logic (avoiding circular dependency)
-        let stripped = switch (Text.stripStart(address, #text("kaspa:"))) {
-            case (null) {
-                return #err(Errors.invalidAddress("Failed to strip 'kaspa:' prefix"));
-            };
-            case (?addr) { addr };
+        // Strip either kaspa: or kaspatest: prefix and remember which one
+        let is_testnet = Text.startsWith(address, #text("kaspatest:"));
+        let prefix_text = if (is_testnet) { "kaspatest" } else { "kaspa" };
+
+        let stripped = if (is_testnet) {
+            switch (Text.stripStart(address, #text("kaspatest:"))) {
+                case (null) {
+                    return #err(Errors.invalidAddress("Failed to strip 'kaspatest:' prefix"));
+                };
+                case (?s) { s };
+            }
+        } else {
+            switch (Text.stripStart(address, #text("kaspa:"))) {
+                case (null) {
+                    return #err(Errors.invalidAddress("Failed to strip 'kaspa:' prefix"));
+                };
+                case (?s) { s };
+            }
         };
 
         // Decode using charset
@@ -264,9 +310,9 @@ module {
         let payload_5bit = Array.tabulate<Nat8>(payload_len, func(i) = data_array[i]);
         let checksum = Array.tabulate<Nat8>(8, func(i) = data_array[payload_len + i]);
 
-        // Verify checksum
-        let prefix : [Nat8] = [107, 97, 115, 112, 97]; // "kaspa"
-        let calculated_checksum_mod = polymod(prefix, payload_5bit);
+        // Verify checksum using the correct prefix
+        let prefix_bytes = Blob.toArray(Text.encodeUtf8(prefix_text));
+        let calculated_checksum_mod = polymod(prefix_bytes, payload_5bit);
         let expected_checksum = Buffer.Buffer<Nat8>(8);
         for (i in Iter.range(0, 7)) {
             let value = Nat8.fromNat(Nat64.toNat((calculated_checksum_mod >> Nat64.fromNat(5 * (7 - i))) & 0x1f));

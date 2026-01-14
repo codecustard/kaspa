@@ -12,5 +12,5 @@ module {
     public let DUST_THRESHOLD : Nat64 = 1_000; // 1,000 sompi
     public let MAX_AMOUNT : Nat64 = 2_100_000_000_000_000; // 21 million KAS in sompi
     public let MIN_FEE : Nat64 = 1_000; // Minimum fee in sompi
-    public let MAX_FEE : Nat64 = 100_000_000; // Maximum reasonable fee in sompi
+    public let MAX_FEE : Nat64 = 100_000_000_000; // Allow up to 1000 KAS for KRC20 deploys
 }

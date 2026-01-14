@@ -123,7 +123,14 @@ module {
 
                         let pubkey_bytes = Blob.toArray(pk_result.public_key);
 
-                        switch (Address.generateAddress(pk_result.public_key, address_type)) {
+                        // Use network-specific prefix
+                        let prefix = if (config.network == "testnet") {
+                            "kaspatest"
+                        } else {
+                            "kaspa"
+                        };
+
+                        switch (Address.generateAddressWithPrefix(pk_result.public_key, address_type, prefix)) {
                             case (#err(error)) { #err(error) };
                             case (#ok(addr_info)) {
                                 #ok({
@@ -1059,9 +1066,9 @@ module {
     public func createTestnetWallet(key_name: Text) : Wallet {
         let config: WalletConfig = {
             key_name = key_name;
-            api_host = "api-testnet.kaspa.org";
+            api_host = "api-tn10.kaspa.org";
             network = "testnet";
-            max_fee = 10_000_000; // Higher for testnet
+            max_fee = 100_000_000_000; // Allow up to 1000 KAS for KRC20 deploys
             default_fee_rate = 1000;
         };
         Wallet(config)

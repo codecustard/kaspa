@@ -176,8 +176,8 @@ module {
     // For P2SH, addressType should be 2
     assert(addressType == 2);
 
-    // generateAddress takes (pubkey: Blob, addr_type: Nat)
-    let result = Address.generateAddress(Blob.fromArray(scriptHash), addressType);
+    // generateAddressWithPrefix takes (pubkey: Blob, addr_type: Nat, prefix: Text)
+    let result = Address.generateAddressWithPrefix(Blob.fromArray(scriptHash), addressType, prefix);
     switch (result) {
       case (#ok(info)) { #ok(info.address) };
       case (#err(e)) { #err(e) };

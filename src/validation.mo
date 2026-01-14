@@ -19,8 +19,8 @@ module {
             return #err(Errors.invalidAddress("Address cannot be empty"));
         };
 
-        if (not Text.startsWith(address, #text("kaspa:"))) {
-            return #err(Errors.invalidAddress("Address must start with 'kaspa:' prefix"));
+        if (not Text.startsWith(address, #text("kaspa:")) and not Text.startsWith(address, #text("kaspatest:"))) {
+            return #err(Errors.invalidAddress("Address must start with 'kaspa:' or 'kaspatest:' prefix"));
         };
 
         // Basic length check
