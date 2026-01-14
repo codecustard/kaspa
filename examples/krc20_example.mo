@@ -111,7 +111,7 @@ persistent actor KRC20Example {
 
         // 5. Build commit transaction
         let commit_result = KRC20Builder.buildCommit(
-            addressInfo.pubkey,
+            addressInfo.public_key,
             operation_json,
             utxo,
             KRC20Builder.RECOMMENDED_COMMIT_AMOUNT,

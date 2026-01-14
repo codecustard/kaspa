@@ -26,6 +26,12 @@
     "ii_wallet_frontend": {
       "type": "assets",
       "source": ["examples/ii_kaspa_wallet/frontend/dist/"]
+    },
+
+    "krc20_example": {
+      "type": "motoko",
+      "main": "examples/krc20_example.mo",
+      "init_cycles": 3000000000000
     }
   },
   "defaults": {

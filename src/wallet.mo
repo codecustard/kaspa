@@ -1025,6 +1025,22 @@ module {
             }
         };
 
+        // Get UTXOs for an address
+        // This is useful for advanced use cases like KRC20 where you need direct UTXO access
+        public func getUTXOs(address: Text) : async Result<[Types.UTXO]> {
+            switch (await fetchUTXOs(address)) {
+                case (#err(error)) { #err(error) };
+                case (#ok(extended_utxos)) {
+                    // Convert ExtendedUTXO to basic UTXO type
+                    let utxos = Array.map<ExtendedUTXO, Types.UTXO>(
+                        extended_utxos,
+                        func(ext) { ext.utxo }
+                    );
+                    #ok(utxos)
+                };
+            }
+        };
+
 
     };
 
