@@ -2,7 +2,7 @@ dev-dependencies = { }
 
 [package]
 name = "kaspa"
-version = "0.3.0"
+version = "0.3.1"
 description = "Motoko package for Kaspa integration."
 repository = "https://github.com/codecustard/kaspa"
 keywords = [ "kaspa", "threshold", "chain-fusion" ]
