@@ -14,6 +14,7 @@ Welcome to the `kaspa` project, which provides a Motoko package (`kaspa-mo`) and
   - [Note on Frontend Environment Variables](#note-on-frontend-environment-variables)
 - [Examples](#examples)
   - [Internet Identity + Kaspa Wallet](#internet-identity--kaspa-wallet)
+  - [KRC20 Token Deployment](#krc20-token-deployment)
   - [Basic Wallet Broadcasting](#basic-wallet-broadcasting)
 - [Usage](#usage)
   - [Example: Generating a Kaspa Address](#example-generating-a-kaspa-address)
@@ -24,6 +25,9 @@ Welcome to the `kaspa` project, which provides a Motoko package (`kaspa-mo`) and
   - [Dependencies](#dependencies-1)
   - [Notes](#notes)
 - [Modules](#modules)
+  - [KRC20 Modules](#krc20-modules-srckrc20)
+  - [script_builder.mo](#script_buildermo)
+  - [opcodes.mo](#opcodesmo)
   - [address.mo](#addressmo)
   - [sighash.mo](#sighashmo)
   - [transaction.mo](#transactionmo)
@@ -132,6 +136,33 @@ dfx deploy
 ```
 
 **[📖 Full Documentation](examples/ii_kaspa_wallet/README.md)**
+
+### KRC20 Token Deployment
+
+**Location**: [`examples/krc20_example/`](examples/krc20_example/)
+
+Deploy KRC20 tokens on Kaspa using the commit-reveal pattern from ICP. Successfully tested on Kaspa Testnet 10.
+
+**Features**:
+- 🪙 Deploy new KRC20 tokens with custom ticker, supply, and mint limits
+- 🔄 Commit-reveal pattern for protocol compliance
+- 🔐 Threshold ECDSA signing (no private keys in canister)
+- ✅ Verified working on Kaspa Testnet 10
+
+**Quick Start**:
+```bash
+dfx start --background
+dfx deploy krc20_example
+
+# Get your testnet address and fund it from faucet
+dfx canister call krc20_example getAddress
+# Fund with ~2100 KAS from: https://faucet-tn10.kaspanet.io/
+
+# Deploy a token
+dfx canister call krc20_example deployTokenWithBroadcast '("MYTOKEN", "21000000000000000", "100000000000", opt 8, "YOUR_KASPA_ADDRESS")'
+```
+
+**[📖 Full Documentation](examples/krc20_example/README.md)**
 
 ### Basic Wallet Broadcasting
 
@@ -280,6 +311,47 @@ The `kaspa_test_tecdsa.mo` canister demonstrates how to use the `kaspa-mo` packa
 - The canister fetches UTXOs from `api.kaspa.org`. Handle potential API rate limits or errors (e.g., via retry logic).
 
 ## Modules
+
+### KRC20 Modules (`src/krc20/`)
+
+The KRC20 modules provide full support for deploying and managing KRC20 tokens on Kaspa.
+
+#### `krc20/types.mo`
+Defines data structures for KRC20 operations:
+- `DeployMintParams` - Fair launch token deployment (anyone can mint)
+- `DeployIssueParams` - Controlled token deployment (owner issues)
+- `MintParams`, `TransferMintParams`, `BurnMintParams` - Token operations
+- `ListParams`, `SendParams` - Trading operations
+
+#### `krc20/operations.mo`
+JSON formatters for KRC20 protocol messages:
+```motoko
+import KRC20Ops "mo:kaspa/krc20/operations";
+
+// Deploy a fair-launch token
+let json = KRC20Ops.formatDeployMint({
+  tick = "MYTOKEN";
+  max = "21000000000000000";
+  lim = "100000000000";
+  to = null; dec = null; pre = null;
+});
+// Returns: {"p":"krc-20","op":"deploy","tick":"MYTOKEN","max":"21000000000000000","lim":"100000000000"}
+```
+
+#### `krc20/builder.mo`
+High-level transaction builders for commit-reveal workflow:
+- `buildCommitTransaction()` - Creates P2SH commit output
+- `buildRevealTransaction()` - Spends commit with redeem script
+- Fee constants: `DEPLOY_FEE` (1000 KAS), `MINT_FEE` (1 KAS)
+
+### `script_builder.mo`
+Low-level script construction for P2SH and data envelopes:
+- `buildDataEnvelope()` - Creates Kasplex data envelope
+- `buildRedeemScript()` - Constructs redeem script with pubkey and envelope
+- `buildP2SHScriptPubKey()` - Creates P2SH locking script
+
+### `opcodes.mo`
+Kaspa opcode constants including `OP_CHECKSIG_ECDSA`, `OP_BLAKE2B`, `OP_IF/ENDIF`, etc.
 
 ### `address.mo`
 Provides functions for encoding and decoding Kaspa addresses using the CashAddr format, converting public keys to script public keys, and handling hex conversions.
