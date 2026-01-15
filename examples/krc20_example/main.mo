@@ -1,18 +1,48 @@
-/// KRC20 Token Example
+/// KRC20 Token Example - Deploy KRC20 tokens on Kaspa from ICP
 ///
-/// This example demonstrates how to use the KRC20 library to deploy,
-/// mint, and transfer tokens using the commit-reveal pattern.
+/// This canister demonstrates deploying KRC20 tokens using the commit-reveal pattern.
+/// Successfully tested on Kaspa Testnet 10 (kaspatest:).
 ///
-/// Key concepts:
+/// ## Quick Start
+///
+/// 1. Start local replica and deploy:
+///    ```
+///    dfx start --background
+///    dfx deploy krc20_example
+///    ```
+///
+/// 2. Get your canister's Kaspa testnet address:
+///    ```
+///    dfx canister call krc20_example getAddress
+///    ```
+///
+/// 3. Fund the address with testnet KAS (need ~2100+ KAS for deploy):
+///    Faucet: https://faucet-tn10.kaspanet.io/
+///
+/// 4. Deploy a token (commit transaction):
+///    ```
+///    dfx canister call krc20_example deployTokenWithBroadcast '("MYTOKEN", "21000000000000000", "100000000000", opt 8, "YOUR_KASPA_ADDRESS")'
+///    ```
+///
+/// 5. Wait ~10 seconds for commit to confirm, then reveal:
+///    ```
+///    dfx canister call krc20_example revealOperation '("COMMIT_TX_ID", "YOUR_KASPA_ADDRESS")'
+///    ```
+///
+/// 6. Check your token:
+///    - Token info: https://tn10api.kasplex.org/v1/krc20/token/MYTOKEN
+///    - Operation status: https://tn10api.kasplex.org/v1/krc20/op/REVEAL_TX_ID
+///    - Look for "opAccept": "1" to confirm success
+///
+/// ## Fee Structure
+/// - Deploy: 1000 KAS commit fee + 1000 KAS reveal fee = 2000 KAS total
+/// - Mint: 1 KAS fee
+/// - Transfer: Network fees only
+///
+/// ## Key Concepts
 /// - Commit-Reveal: Each KRC20 operation requires 2 transactions
-/// - P2SH Scripts: Data is embedded in Pay-to-Script-Hash outputs
-/// - Threshold ECDSA: Uses IC's ECDSA for signing transactions
-///
-/// NOTE: This is a demonstration. For production use, you'll need to:
-/// - Implement actual signing with IC ECDSA
-/// - Add transaction broadcasting
-/// - Handle confirmations properly
-/// - Implement the complete reveal workflow
+/// - P2SH Scripts: Data is embedded using OP_FALSE OP_IF...OP_ENDIF envelope
+/// - Threshold ECDSA: Uses IC's threshold ECDSA for signing (no private keys stored)
 
 import Blob "mo:base/Blob";
 import Debug "mo:base/Debug";
@@ -23,18 +53,18 @@ import Nat8 "mo:base/Nat8";
 import Array "mo:base/Array";
 import Error "mo:base/Error";
 
-import Wallet "../src/wallet";
-import Errors "../src/errors";
-import Types "../src/types";
-import Address "../src/address";
-import ScriptBuilder "../src/script_builder";
-import Sighash "../src/sighash";
-import Transaction "../src/transaction";
+import Wallet "../../src/wallet";
+import Errors "../../src/errors";
+import Types "../../src/types";
+import Address "../../src/address";
+import ScriptBuilder "../../src/script_builder";
+import Sighash "../../src/sighash";
+import Transaction "../../src/transaction";
 import IC "mo:ic";
 
-import KRC20Types "../src/krc20/types";
-import KRC20Operations "../src/krc20/operations";
-import KRC20Builder "../src/krc20/builder";
+import KRC20Types "../../src/krc20/types";
+import KRC20Operations "../../src/krc20/operations";
+import KRC20Builder "../../src/krc20/builder";
 
 persistent actor KRC20Example {
 

@@ -30,7 +30,7 @@
 
     "krc20_example": {
       "type": "motoko",
-      "main": "examples/krc20_example.mo",
+      "main": "examples/krc20_example/main.mo",
       "init_cycles": 3000000000000
     }
   },
