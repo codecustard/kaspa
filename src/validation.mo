@@ -33,6 +33,15 @@ module {
 
     // Validate amount with optional dust check
     public func validateAmount(amount: Nat64, dust_check: Bool) : Result<Nat64> {
+        // Zero amounts are never valid
+        if (amount == 0) {
+            return #err(Errors.invalidAmount(
+                "Amount cannot be zero",
+                ?Constants.DUST_THRESHOLD,
+                ?Constants.MAX_AMOUNT
+            ));
+        };
+
         if (dust_check and amount < Constants.DUST_THRESHOLD) {
             return #err(Errors.invalidAmount(
                 "Amount below dust threshold",

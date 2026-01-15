@@ -71,7 +71,7 @@ persistent actor {
 
         // Check it includes all fields
         let includes_to = Text.contains(deploy_json_full, #text "\"to\":\"kaspa:");
-        let includes_dec = Text.contains(deploy_json_full, #text "\"dec\":8");
+        let includes_dec = Text.contains(deploy_json_full, #text "\"dec\":\"8\"");  // dec is a string
         let includes_pre = Text.contains(deploy_json_full, #text "\"pre\":\"500000\"");
         let all_optional_fields = includes_to and includes_dec and includes_pre;
 
