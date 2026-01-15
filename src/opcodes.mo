@@ -44,12 +44,9 @@ module {
   public let OP_SHA256 : Nat8 = 0xA8;
 
   // Crypto - BLAKE2B (Kaspa-specific)
-  // NOTE: This opcode value needs verification from Kaspa source code
+  // Verified from rusty-kaspa source code: 0xAA
   // Bitcoin doesn't have BLAKE2B, so this is a Kaspa extension
-  public let OP_BLAKE2B : Nat8 = 0xB3;
-
-  // Crypto - Hash operations
-  public let OP_HASH256 : Nat8 = 0xAA;  // SHA256(SHA256(x))
+  public let OP_BLAKE2B : Nat8 = 0xAA;
 
   // Signature verification
   public let OP_CHECKSIG : Nat8 = 0xAC;

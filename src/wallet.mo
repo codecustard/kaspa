@@ -2,6 +2,7 @@ import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Buffer "mo:base/Buffer";
 import Char "mo:base/Char";
+import Debug "mo:base/Debug";
 import Error "mo:base/Error";
 import Float "mo:base/Float";
 import Int "mo:base/Int";
@@ -1046,6 +1047,27 @@ module {
                     #ok(utxos)
                 };
             }
+        };
+
+        // Sign and broadcast a pre-built transaction (for P2SH/KRC20)
+        // This is useful for commit transactions where the transaction structure is already built
+        public func signAndBroadcastTransaction(
+            tx: Types.KaspaTransaction,
+            utxos: [Types.UTXO],
+            derivation_path: ?Text
+        ) : async Result<Text> {
+            // Sign the transaction
+            let signed_tx = switch (await signTransaction(tx, utxos, derivation_path)) {
+                case (#err(error)) { return #err(error) };
+                case (#ok(signed)) { signed };
+            };
+
+            // Serialize the signed transaction
+            let serialized = Transaction.serialize_transaction(signed_tx);
+            Debug.print("📡 Broadcasting transaction: " # serialized);
+
+            // Broadcast it
+            await broadcastTransaction(serialized)
         };
 
 

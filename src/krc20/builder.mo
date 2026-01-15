@@ -210,10 +210,13 @@ module {
   };
 
   /// Minimum amount for KRC20 operations
-  /// The P2SH output must be above the dust threshold
-  public let MIN_COMMIT_AMOUNT: Nat64 = 1000;  // 1000 sompi
+  /// Deploy requires 1000 KAS fee, so we need more than that
+  public let MIN_COMMIT_AMOUNT: Nat64 = 100_100_000_000;  // 1001 KAS (1000 fee + 1 KAS output)
 
   /// Recommended commit amount for KRC20 operations
-  /// This ensures the output is well above dust threshold
-  public let RECOMMENDED_COMMIT_AMOUNT: Nat64 = 10000;  // 10000 sompi
+  /// This covers the 1000 KAS deploy fee plus buffer for output
+  public let RECOMMENDED_COMMIT_AMOUNT: Nat64 = 100_100_000_000;  // 1001 KAS
+
+  /// Deploy fee required by KRC20 protocol
+  public let DEPLOY_FEE: Nat64 = 100_000_000_000;  // 1000 KAS
 };

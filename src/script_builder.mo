@@ -113,14 +113,14 @@ module {
     // Protocol identifier
     buf.append(Buffer.fromArray(opPush(textToBytes(protocol))));
 
-    // Metadata marker (1 indicates metadata follows)
-    buf.append(Buffer.fromArray(opPush([1])));
+    // Metadata marker: OP_1 (0x51) pushes number 1
+    buf.add(Opcodes.OP_1);
 
     // Metadata (can be empty)
     buf.append(Buffer.fromArray(opPush(metadata)));
 
-    // Content marker (0 indicates content follows)
-    buf.append(Buffer.fromArray(opPush([0])));
+    // Content marker: OP_0 (0x00) pushes empty/0
+    buf.add(Opcodes.OP_0);
 
     // Content data - may need chunking if >520 bytes
     if (content.size() <= Opcodes.MAX_PUSH_SIZE) {

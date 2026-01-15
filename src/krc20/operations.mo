@@ -33,7 +33,7 @@ module {
     };
 
     switch (params.dec) {
-      case (?decimals) { json #= ",\"dec\":" # Nat8.toText(decimals) };
+      case (?decimals) { json #= ",\"dec\":\"" # Nat8.toText(decimals) # "\"" };  // dec as string
       case null {};
     };
 
@@ -126,7 +126,7 @@ module {
     };
 
     switch (params.dec) {
-      case (?decimals) { json #= ",\"dec\":" # Nat8.toText(decimals) };
+      case (?decimals) { json #= ",\"dec\":\"" # Nat8.toText(decimals) # "\"" };  // dec as string
       case null {};
     };
 

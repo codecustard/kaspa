@@ -19,12 +19,18 @@ import Debug "mo:base/Debug";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
 import Nat64 "mo:base/Nat64";
+import Nat8 "mo:base/Nat8";
 import Array "mo:base/Array";
+import Error "mo:base/Error";
 
 import Wallet "../src/wallet";
 import Errors "../src/errors";
 import Types "../src/types";
 import Address "../src/address";
+import ScriptBuilder "../src/script_builder";
+import Sighash "../src/sighash";
+import Transaction "../src/transaction";
+import IC "mo:ic";
 
 import KRC20Types "../src/krc20/types";
 import KRC20Operations "../src/krc20/operations";
@@ -41,6 +47,35 @@ persistent actor KRC20Example {
     /// Get the canister's Kaspa address
     public func getAddress() : async Result.Result<Wallet.AddressInfo, Errors.KaspaError> {
         await wallet.generateAddress(null, null)
+    };
+
+    /// Consolidate UTXOs by sending all funds to self
+    /// This is necessary when you have multiple small UTXOs and need one large one
+    public func consolidateUTXOs(from_address: Text) : async Result.Result<Text, Errors.KaspaError> {
+        // Send almost all funds to self (leaving enough for fee)
+        let balance = switch (await wallet.getBalance(from_address)) {
+            case (#ok(bal)) { bal.confirmed };
+            case (#err(e)) { return #err(e) };
+        };
+
+        if (balance == 0) {
+            return #err(#InsufficientFunds({ required = 1000; available = 0 }));
+        };
+
+        // Leave 1,000,000 sompi (0.01 KAS) for fees
+        let fee_buffer: Nat64 = 1_000_000;
+        let amount_to_send = if (balance > fee_buffer) { balance - fee_buffer } else { return #err(#InsufficientFunds({ required = fee_buffer; available = balance })) };
+
+        switch (await wallet.sendTransaction(
+            from_address,
+            from_address,  // Send to self
+            amount_to_send,
+            null,  // Use default fee
+            null   // Use default derivation path
+        )) {
+            case (#ok(result)) { #ok(result.transaction_id) };
+            case (#err(e)) { #err(e) };
+        }
     };
 
     /// Get balance of an address
@@ -360,14 +395,14 @@ persistent actor KRC20Example {
         let operation_json = KRC20Operations.formatDeployMint(deploy_params);
         Debug.print("📝 Operation: " # operation_json);
 
-        // 3. Get address info for public key
+        // 3. Get address info for public key (use canister's address, not user's)
         let addressInfo = switch (await wallet.generateAddress(null, null)) {
             case (#ok(info)) { info };
             case (#err(e)) { return #err(e) };
         };
 
-        // 4. Get UTXOs to fund the transaction
-        let utxos = switch (await wallet.getUTXOs(from_address)) {
+        // 4. Get UTXOs to fund the transaction (fetch from canister's address)
+        let utxos = switch (await wallet.getUTXOs(addressInfo.address)) {
             case (#ok(utxos)) {
                 if (utxos.size() == 0) {
                     return #err(#InsufficientFunds({
@@ -396,24 +431,57 @@ persistent actor KRC20Example {
             }));
         };
 
-        // 6. Build commit transaction
+        // 6. Select UTXO with enough funds or combine multiple UTXOs
+        // Find a UTXO with enough balance, or use the largest one
+        var selected_utxo = utxos[0];
+        let total_needed = deploy_fee + commit_amount;
+
+        label utxo_loop for (utxo in utxos.vals()) {
+            if (utxo.amount >= total_needed) {
+                selected_utxo := utxo;
+                break utxo_loop;
+            };
+            // Use the largest UTXO if none are big enough
+            if (utxo.amount > selected_utxo.amount) {
+                selected_utxo := utxo;
+            };
+        };
+
+        Debug.print("📊 Selected UTXO amount: " # debug_show(selected_utxo.amount));
+        Debug.print("💰 Commit amount: " # debug_show(commit_amount));
+        Debug.print("💸 Deploy fee: " # debug_show(deploy_fee));
+        Debug.print("📦 Total UTXOs available: " # debug_show(utxos.size()));
+
+        // Check if we need to consolidate UTXOs first
+        if (selected_utxo.amount < total_needed) {
+            Debug.print("⚠️  Single UTXO insufficient. Please consolidate UTXOs first.");
+            return #err(#InsufficientFunds({
+                required = total_needed;
+                available = selected_utxo.amount;
+            }));
+        };
+
         let commit_result = KRC20Builder.buildCommit(
             addressInfo.public_key,
             operation_json,
-            utxos[0],
+            selected_utxo,
             commit_amount,
             deploy_fee,
-            from_address,
+            addressInfo.address,  // Use canister's address for change
             true  // Use ECDSA
         );
 
         let commit_pair = switch (commit_result) {
-            case (#ok(pair)) { pair };
+            case (#ok(pair)) {
+                Debug.print("🔧 Commit TX inputs: " # debug_show(pair.commitTx.inputs.size()));
+                Debug.print("🔧 Commit TX outputs: " # debug_show(pair.commitTx.outputs.size()));
+                pair
+            };
             case (#err(e)) { return #err(e) };
         };
 
-        // 7. Get P2SH address from script hash (use same prefix as from_address)
-        let prefix = if (Text.startsWith(from_address, #text("kaspatest:"))) {
+        // 7. Get P2SH address from script hash (use same prefix as canister's address)
+        let prefix = if (Text.startsWith(addressInfo.address, #text("kaspatest:"))) {
             "kaspatest"
         } else {
             "kaspa"
@@ -427,20 +495,16 @@ persistent actor KRC20Example {
         Debug.print("🔐 P2SH Address: " # p2sh_address);
 
         // 8. Sign and broadcast the commit transaction
-        // For now, we'll use the wallet's sendTransaction which handles signing
-        // Note: This is a simplified version - production would need custom signing for P2SH
-        let tx_result = switch (await wallet.sendTransaction(
-            from_address,
-            p2sh_address,
-            commit_amount,
-            ?deploy_fee,
-            null
+        // Use the wallet's signAndBroadcastTransaction for the pre-built P2SH commit
+        let commit_tx_id = switch (await wallet.signAndBroadcastTransaction(
+            commit_pair.commitTx,
+            [selected_utxo],  // Must use the same UTXO we built the transaction with!
+            null  // Use default derivation path
         )) {
-            case (#ok(result)) { result };
+            case (#ok(tx_id)) { tx_id };
             case (#err(e)) { return #err(e) };
         };
 
-        let commit_tx_id = tx_result.transaction_id;
         let redeem_script_hex = Address.hexFromArray(commit_pair.redeemScript);
 
         // 9. Store pending reveal
@@ -491,23 +555,215 @@ persistent actor KRC20Example {
             };
         };
 
-        // 2. Build reveal outputs (send remaining amount to recipient)
-        let reveal_amount: Nat64 = 9000;  // commit_amount (10000) - reveal_fee (1000)
-        let outputs = switch (KRC20Builder.buildRevealOutputs(recipient_address, reveal_amount)) {
-            case (#ok(outputs)) { outputs };
+        Debug.print("📜 Found redeem script, length: " # debug_show(redeem_script.size()));
+        Debug.print("📜 Redeem script (hex): " # Address.hexFromArray(redeem_script));
+        // Print first few bytes to verify structure
+        if (redeem_script.size() >= 3) {
+            Debug.print("📜 Redeem script starts with: " # debug_show([redeem_script[0], redeem_script[1], redeem_script[2]]));
+        };
+
+        // 2. Get P2SH address from the redeem script hash
+        let scriptHash = ScriptBuilder.hashRedeemScript(redeem_script);
+        let p2sh_address = switch (KRC20Builder.getP2SHAddress(2, scriptHash, "kaspatest")) {
+            case (#ok(addr)) { addr };
             case (#err(e)) { return #err(e) };
         };
 
-        // 3. For now, return instructions (full reveal signing requires P2SH signature script)
-        // This is a placeholder - production would need proper P2SH spending signature
-        Debug.print("⚠️  Reveal transaction building not yet fully implemented");
-        Debug.print("📋 You have the redeem script stored");
-        Debug.print("🔧 Manual reveal required using Kaspa wallet tools");
+        Debug.print("🏠 P2SH Address: " # p2sh_address);
+
+        // 3. Get UTXO from P2SH address
+        let p2sh_utxos = switch (await wallet.getUTXOs(p2sh_address)) {
+            case (#ok(utxos)) {
+                if (utxos.size() == 0) {
+                    return #err(#InsufficientFunds({
+                        required = 1;
+                        available = 0;
+                    }));
+                };
+                utxos
+            };
+            case (#err(e)) { return #err(e) };
+        };
+
+        let p2sh_utxo = p2sh_utxos[0];
+        Debug.print("💰 P2SH UTXO amount: " # debug_show(p2sh_utxo.amount));
+        Debug.print("📍 P2SH UTXO txid: " # p2sh_utxo.transactionId);
+        Debug.print("📍 P2SH UTXO index: " # debug_show(p2sh_utxo.index));
+        Debug.print("📜 P2SH UTXO scriptPubKey: " # p2sh_utxo.scriptPublicKey);
+
+        // 4. Calculate reveal amount (P2SH amount minus fee)
+        // KRC20 deploy requires 1000 KAS protocol fee on reveal
+        let reveal_fee: Nat64 = 100_000_000_000;  // 1000 KAS deploy fee
+        if (p2sh_utxo.amount <= reveal_fee) {
+            return #err(#InsufficientFunds({
+                required = reveal_fee + 1;
+                available = p2sh_utxo.amount;
+            }));
+        };
+        let reveal_amount = p2sh_utxo.amount - reveal_fee;
+
+        // 5. Build reveal outputs
+        let recipient_info = switch (Address.decodeAddress(recipient_address)) {
+            case (#ok(info)) { info };
+            case (#err(e)) { return #err(e) };
+        };
+
+        let outputs: [Types.TransactionOutput] = [{
+            amount = reveal_amount;
+            scriptPublicKey = {
+                version = 0 : Nat16;
+                scriptPublicKey = recipient_info.script_public_key;
+            };
+        }];
+
+        // 6. Build the reveal transaction
+        // Use the actual UTXO index from what we fetched (not hardcoded)
+        let reveal_tx: Types.KaspaTransaction = {
+            version = 0;
+            inputs = [{
+                previousOutpoint = {
+                    transactionId = p2sh_utxo.transactionId;  // Use UTXO's txid
+                    index = p2sh_utxo.index;  // Use actual index from UTXO
+                };
+                signatureScript = "";  // Will be filled after signing
+                sequence = 0;
+                sigOpCount = 1;
+            }];
+            outputs = outputs;
+            lockTime = 0;
+            subnetworkId = "0000000000000000000000000000000000000000";
+            gas = 0;
+            payload = "";
+        };
+
+        Debug.print("🔧 Reveal TX input txid: " # p2sh_utxo.transactionId);
+        Debug.print("🔧 Reveal TX input index: " # debug_show(p2sh_utxo.index));
+
+        // 7. Sign the reveal transaction (P2SH spending)
+        // For P2SH, we need to sign with the redeem script's public key
+        // and include the redeem script in the signature script
+        let signed_reveal = switch (await signP2SHReveal(reveal_tx, p2sh_utxo, redeem_script)) {
+            case (#ok(signed)) { signed };
+            case (#err(e)) { return #err(e) };
+        };
+
+        // 8. Broadcast the reveal transaction
+        let serialized = Transaction.serialize_transaction(signed_reveal);
+        Debug.print("📡 Broadcasting reveal: " # serialized);
+
+        let reveal_tx_id = switch (await wallet.broadcastSerializedTransaction(serialized)) {
+            case (#ok(tx_id)) { tx_id };
+            case (#err(e)) { return #err(e) };
+        };
+
+        // 9. Clear the pending reveal
+        pendingReveals := Array.filter<(Text, [Nat8])>(
+            pendingReveals,
+            func(pair) { pair.0 != commit_tx_id }
+        );
+
+        Debug.print("✅ Reveal broadcast! TX ID: " # reveal_tx_id);
 
         #ok({
-            reveal_tx_id = "pending_manual_reveal";
-            message = "Reveal transaction requires manual P2SH signing. Redeem script is stored in pendingReveals.";
+            reveal_tx_id = reveal_tx_id;
+            message = "Token deployment revealed! Check KRC20 explorer.";
         })
+    };
+
+    // Helper function to sign P2SH reveal transaction
+    private func signP2SHReveal(
+        tx: Types.KaspaTransaction,
+        utxo: Types.UTXO,
+        redeem_script: [Nat8]
+    ) : async Result.Result<Types.KaspaTransaction, Errors.KaspaError> {
+
+        // Calculate sighash for the P2SH input
+        let reused_values: Sighash.SighashReusedValues = {
+            var previousOutputsHash = null;
+            var sequencesHash = null;
+            var sigOpCountsHash = null;
+            var outputsHash = null;
+            var payloadHash = null;
+        };
+
+        // Try using the actual P2SH scriptPubKey for sighash (not the redeem script)
+        // The P2SH scriptPubKey is: OP_BLAKE2B <hash> OP_EQUAL
+        // This is stored in utxo.scriptPublicKey
+
+        Debug.print("🔧 Using P2SH scriptPubKey for sighash: " # utxo.scriptPublicKey);
+
+        let p2sh_utxo_for_sighash: Types.UTXO = {
+            transactionId = utxo.transactionId;
+            index = utxo.index;
+            amount = utxo.amount;
+            scriptPublicKey = utxo.scriptPublicKey;  // Use actual P2SH script
+            scriptVersion = utxo.scriptVersion;
+            address = utxo.address;
+        };
+
+        Debug.print("🔢 UTXO for sighash - scriptPublicKey: " # p2sh_utxo_for_sighash.scriptPublicKey);
+        Debug.print("🔢 UTXO for sighash - amount: " # debug_show(p2sh_utxo_for_sighash.amount));
+        Debug.print("🔢 UTXO for sighash - scriptVersion: " # debug_show(p2sh_utxo_for_sighash.scriptVersion));
+
+        let sighash = switch (Sighash.calculate_sighash_ecdsa(tx, 0, p2sh_utxo_for_sighash, Sighash.SigHashAll, reused_values)) {
+            case (null) {
+                return #err(#CryptographicError({ message = "Failed to calculate P2SH sighash" }));
+            };
+            case (?hash) {
+                Debug.print("🔏 Sighash (hex): " # Address.hexFromArray(hash));
+                hash
+            };
+        };
+
+        // Sign with IC ECDSA
+        try {
+            let signature_result = await (with cycles = 30_000_000_000) IC.ic.sign_with_ecdsa({
+                message_hash = Blob.fromArray(sighash);
+                derivation_path = [];
+                key_id = { name = "dfx_test_key"; curve = #secp256k1 };
+            });
+
+            let signature_bytes = Blob.toArray(signature_result.signature);
+            Debug.print("✍️ Raw signature length: " # debug_show(signature_bytes.size()));
+            Debug.print("✍️ Raw signature (hex): " # Address.hexFromArray(signature_bytes));
+
+            let sighash_type: Nat8 = 0x01;  // SigHashAll
+
+            // Signature with hashtype appended (as required by Bitcoin/Kaspa scripts)
+            let sig_with_hashtype = Array.append(signature_bytes, [sighash_type]);
+
+            // Build P2SH signature script using the helper function
+            let script_bytes = ScriptBuilder.buildP2SHSignatureScript(
+                sig_with_hashtype,
+                redeem_script
+            );
+
+            Debug.print("🔏 Signature script length: " # debug_show(script_bytes.size()));
+            Debug.print("🔏 Signature length: " # debug_show(sig_with_hashtype.size()));
+            Debug.print("🔏 Redeem script length: " # debug_show(redeem_script.size()));
+
+            let signature_script = Address.hexFromArray(script_bytes);
+
+            // Update transaction with signature script
+            let signed_input: Types.TransactionInput = {
+                previousOutpoint = tx.inputs[0].previousOutpoint;
+                signatureScript = signature_script;
+                sequence = tx.inputs[0].sequence;
+                sigOpCount = tx.inputs[0].sigOpCount;
+            };
+
+            #ok({
+                version = tx.version;
+                inputs = [signed_input];
+                outputs = tx.outputs;
+                lockTime = tx.lockTime;
+                subnetworkId = tx.subnetworkId;
+                gas = tx.gas;
+                payload = tx.payload;
+            })
+        } catch (e) {
+            #err(#CryptographicError({ message = "Failed to sign P2SH reveal: " # Error.message(e) }))
+        }
     };
 
     // System functions
