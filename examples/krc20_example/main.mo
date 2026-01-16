@@ -108,9 +108,143 @@ persistent actor KRC20Example {
         }
     };
 
-    /// Get balance of an address
+    /// Get balance of an address (KAS balance in sompi)
     public func getBalance(address: Text) : async Result.Result<Wallet.Balance, Errors.KaspaError> {
         await wallet.getBalance(address)
+    };
+
+    /// Get KRC20 token information from Kasplex API
+    ///
+    /// @param tick - Token ticker
+    /// @return Token details including max supply, mint limit, decimals, etc.
+    public func getTokenInfo(tick: Text) : async Result.Result<Text, Text> {
+        let url = "https://tn10api.kasplex.org/v1/krc20/token/" # tick;
+        
+        try {
+            let response = await (with cycles = 50_000_000_000) IC.ic.http_request({
+                url = url;
+                max_response_bytes = ?2048;
+                method = #get;
+                headers = [];
+                body = null;
+                transform = null;
+                is_replicated = null;
+            });
+
+            let body_text = switch (Text.decodeUtf8(response.body)) {
+                case (?text) { text };
+                case null { return #err("Failed to decode response") };
+            };
+
+            #ok(body_text)
+        } catch (e) {
+            #err("Failed to fetch token info: " # Error.message(e))
+        }
+    };
+
+    /// Get KRC20 token balance for a specific token
+    ///
+    /// @param address - Kaspa address
+    /// @param tick - Token ticker
+    /// @return Token balance details (balance, locked, decimals)
+    public func getKRC20TokenBalance(address: Text, tick: Text) : async Result.Result<Text, Text> {
+        let url = "https://tn10api.kasplex.org/v1/krc20/address/" # address # "/token/" # tick;
+        
+        try {
+            let response = await (with cycles = 50_000_000_000) IC.ic.http_request({
+                url = url;
+                max_response_bytes = ?2048;
+                method = #get;
+                headers = [];
+                body = null;
+                transform = null;
+                is_replicated = null;
+            });
+
+            let body_text = switch (Text.decodeUtf8(response.body)) {
+                case (?text) { text };
+                case null { return #err("Failed to decode response") };
+            };
+
+            #ok(body_text)
+        } catch (e) {
+            #err("Failed to fetch token balance: " # Error.message(e))
+        }
+    };
+
+    /// Get all KRC20 tokens held by an address
+    ///
+    /// @param address - Kaspa address
+    /// @return List of all tokens with balances, locked amounts, and decimals
+    public func getKRC20TokenList(address: Text) : async Result.Result<Text, Text> {
+        let url = "https://tn10api.kasplex.org/v1/krc20/address/" # address # "/tokenlist";
+        
+        try {
+            let response = await (with cycles = 50_000_000_000) IC.ic.http_request({
+                url = url;
+                max_response_bytes = ?8192;
+                method = #get;
+                headers = [];
+                body = null;
+                transform = null;
+                is_replicated = null;
+            });
+
+            let body_text = switch (Text.decodeUtf8(response.body)) {
+                case (?text) { text };
+                case null { return #err("Failed to decode response") };
+            };
+
+            #ok(body_text)
+        } catch (e) {
+            #err("Failed to fetch token list: " # Error.message(e))
+        }
+    };
+
+    /// Check if a token is still mintable
+    ///
+    /// @param tick - Token ticker
+    /// @return Status message indicating if minting is available
+    public func checkMintStatus(tick: Text) : async Result.Result<Text, Text> {
+        switch (await getTokenInfo(tick)) {
+            case (#ok(json)) {
+                // Simple check - if we got token info, it exists
+                // Users should parse the JSON to check minted vs max supply
+                #ok("Token found. Parse the JSON response to check 'minted' vs 'max' values. If minted < max, token is still mintable.")
+            };
+            case (#err(e)) {
+                #err("Token not found or error: " # e)
+            };
+        }
+    };
+
+    /// Get operation status from Kasplex API
+    ///
+    /// @param op_tx_id - The reveal transaction ID
+    /// @return Operation status including acceptance ("opAccept": "1" means success)
+    public func getOperationStatus(op_tx_id: Text) : async Result.Result<Text, Text> {
+        let url = "https://tn10api.kasplex.org/v1/krc20/op/" # op_tx_id;
+        
+        try {
+            let response = await (with cycles = 50_000_000_000) IC.ic.http_request({
+                url = url;
+                max_response_bytes = ?4096;
+                method = #get;
+                headers = [];
+                body = null;
+                transform = null;
+                is_replicated = null;
+            });
+
+            let body_text = switch (Text.decodeUtf8(response.body)) {
+                case (?text) { text };
+                case null { return #err("Failed to decode response") };
+            };
+
+            #ok(body_text)
+        } catch (e) {
+            #err("Failed to fetch operation status: " # Error.message(e))
+        }
     };
 
     /// Example 1: Build a KRC20 deploy operation
@@ -554,10 +688,173 @@ persistent actor KRC20Example {
         })
     };
 
+    /// FULL BROADCAST: Mint tokens with automatic commit transaction broadcast
+    ///
+    /// This builds the commit transaction for minting, signs it, and broadcasts it.
+    /// You must call revealOperation() after the commit confirms to complete the mint.
+    ///
+    /// @param tick - Token ticker to mint
+    /// @param recipient - Optional recipient address (defaults to canister's address)
+    /// @return Commit transaction ID and redeem script
+    public func mintTokenWithBroadcast(
+        tick: Text,
+        recipient: ?Text
+    ) : async Result.Result<{
+        commit_tx_id: Text;
+        redeem_script_hex: Text;
+        p2sh_address: Text;
+        instructions: Text;
+    }, Errors.KaspaError> {
+
+        Debug.print("💰 Minting token: " # tick);
+
+        // 1. Get address info for public key
+        let addressInfo = switch (await wallet.generateAddress(null, null)) {
+            case (#ok(info)) { info };
+            case (#err(e)) { return #err(e) };
+        };
+
+        // 2. Determine recipient (use canister's address if not specified)
+        let mint_recipient = switch (recipient) {
+            case (?addr) { addr };
+            case null { addressInfo.address };
+        };
+
+        // 3. Create mint parameters
+        let mint_params : KRC20Types.MintParams = {
+            tick = tick;
+            to = ?mint_recipient;
+        };
+
+        // 4. Format the KRC20 operation JSON
+        let operation_json = KRC20Operations.formatMint(mint_params);
+        Debug.print("📝 Operation: " # operation_json);
+
+        // 5. Get UTXOs to fund the transaction
+        let utxos = switch (await wallet.getUTXOs(addressInfo.address)) {
+            case (#ok(utxos)) {
+                if (utxos.size() == 0) {
+                    return #err(#InsufficientFunds({
+                        required = 100_000_000;  // 1 KAS
+                        available = 0;
+                    }));
+                };
+                utxos
+            };
+            case (#err(e)) { return #err(e) };
+        };
+
+        // 6. Calculate total available
+        let total_available = Array.foldLeft<Types.UTXO, Nat64>(
+            utxos, 0, func(acc, utxo) { acc + utxo.amount }
+        );
+
+        let mint_fee: Nat64 = 100_000_000;  // 1 KAS
+        let commit_amount = KRC20Builder.MIN_COMMIT_AMOUNT;
+        let required = mint_fee + commit_amount;
+
+        if (total_available < required) {
+            return #err(#InsufficientFunds({
+                required = required;
+                available = total_available;
+            }));
+        };
+
+        // 7. Select UTXO with enough funds
+        var selected_utxo = utxos[0];
+        let total_needed = mint_fee + commit_amount;
+
+        label utxo_loop for (utxo in utxos.vals()) {
+            if (utxo.amount >= total_needed) {
+                selected_utxo := utxo;
+                break utxo_loop;
+            };
+            if (utxo.amount > selected_utxo.amount) {
+                selected_utxo := utxo;
+            };
+        };
+
+        Debug.print("📊 Selected UTXO amount: " # debug_show(selected_utxo.amount));
+        Debug.print("💰 Commit amount: " # debug_show(commit_amount));
+        Debug.print("💸 Mint fee: " # debug_show(mint_fee));
+
+        // Check if we need to consolidate UTXOs first
+        if (selected_utxo.amount < total_needed) {
+            Debug.print("⚠️  Single UTXO insufficient. Please consolidate UTXOs first.");
+            return #err(#InsufficientFunds({
+                required = total_needed;
+                available = selected_utxo.amount;
+            }));
+        };
+
+        // 8. Build commit transaction
+        let commit_result = KRC20Builder.buildCommit(
+            addressInfo.public_key,
+            operation_json,
+            selected_utxo,
+            commit_amount,
+            mint_fee,
+            addressInfo.address,
+            true  // Use ECDSA
+        );
+
+        let commit_pair = switch (commit_result) {
+            case (#ok(pair)) {
+                Debug.print("🔧 Commit TX inputs: " # debug_show(pair.commitTx.inputs.size()));
+                Debug.print("🔧 Commit TX outputs: " # debug_show(pair.commitTx.outputs.size()));
+                pair
+            };
+            case (#err(e)) { return #err(e) };
+        };
+
+        // 9. Get P2SH address
+        let prefix = if (Text.startsWith(addressInfo.address, #text("kaspatest:"))) {
+            "kaspatest"
+        } else {
+            "kaspa"
+        };
+
+        let p2sh_address = switch (KRC20Builder.getP2SHAddress(2, commit_pair.p2shScriptHash, prefix)) {
+            case (#ok(addr)) { addr };
+            case (#err(e)) { return #err(e) };
+        };
+
+        Debug.print("🔐 P2SH Address: " # p2sh_address);
+
+        // 10. Sign and broadcast the commit transaction
+        let commit_tx_id = switch (await wallet.signAndBroadcastTransaction(
+            commit_pair.commitTx,
+            [selected_utxo],
+            null
+        )) {
+            case (#ok(tx_id)) { tx_id };
+            case (#err(e)) { return #err(e) };
+        };
+
+        let redeem_script_hex = Address.hexFromArray(commit_pair.redeemScript);
+
+        // 11. Store pending reveal
+        pendingReveals := Array.append(
+            pendingReveals,
+            [(commit_tx_id, commit_pair.redeemScript)]
+        );
+
+        Debug.print("✅ Commit broadcast! TX ID: " # commit_tx_id);
+        Debug.print("💾 Stored redeem script for reveal");
+
+        #ok({
+            commit_tx_id = commit_tx_id;
+            redeem_script_hex = redeem_script_hex;
+            p2sh_address = p2sh_address;
+            instructions = "Commit TX broadcast! Wait ~10 seconds for confirmation, then call revealOperation(\"" # commit_tx_id # "\", \"" # mint_recipient # "\")";
+        })
+    };
+
     /// FULL BROADCAST: Reveal operation after commit confirms
     ///
     /// This builds the reveal transaction, signs it, and broadcasts it.
     /// Call this after the commit transaction has confirmed.
+    /// Works for ALL KRC20 operations (deploy, mint, transfer, burn).
     ///
     /// @param commit_tx_id - Transaction ID of the commit
     /// @param recipient_address - Where to send the remaining funds

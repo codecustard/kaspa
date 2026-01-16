@@ -101,13 +101,183 @@ OP_ENDIF
 
 Uses ICP's threshold ECDSA for signing - no private keys stored in the canister!
 
-## Other Operations
+## Minting Tokens
 
-### Mint Tokens
+After deploying your token, you can mint new tokens up to the mint limit (`lim` parameter).
+
+### Quick Start: Mint to Yourself
 
 ```bash
-dfx canister call krc20_example buildMintCommit '("MYTOKEN", opt "recipient_address", "funding_address")'
+# Mint tokens to the canister's address (default)
+dfx canister call krc20_example mintTokenWithBroadcast '("ICWIN", null)'
 ```
+
+This will:
+1. Create a commit transaction with 1 KAS fee
+2. Broadcast it to the network
+3. Store the redeem script for reveal
+4. Return the commit TX ID
+
+### Wait and Reveal
+
+Wait ~10 seconds for commit confirmation, then reveal:
+
+```bash
+dfx canister call krc20_example revealOperation '("COMMIT_TX_ID", "YOUR_KASPA_ADDRESS")'
+```
+
+### Mint to Another Address
+
+```bash
+# Mint tokens to a specific recipient
+dfx canister call krc20_example mintTokenWithBroadcast '("ICWIN", opt "kaspatest:recipient_address_here")'
+```
+
+### Check Token Status
+
+Before minting, verify the token is still mintable:
+
+```bash
+# Get token info (max supply, current minted, mint limit, etc.)
+dfx canister call krc20_example getTokenInfo '("ICWIN")'
+
+# Check mint status
+dfx canister call krc20_example checkMintStatus '("ICWIN")'
+
+# Check specific token balance
+dfx canister call krc20_example getKRC20TokenBalance '("kaspatest:YOUR_ADDRESS", "ICWIN")'
+
+# OR check all tokens you hold
+dfx canister call krc20_example getKRC20TokenList '("kaspatest:YOUR_ADDRESS")'
+```
+
+### Verify Mint on Explorer
+
+After reveal, check your mint operation:
+
+```bash
+# Get operation status (look for "opAccept": "1")
+dfx canister call krc20_example getOperationStatus '("REVEAL_TX_ID")'
+```
+
+Or visit:
+- **Operation status:** https://tn10api.kasplex.org/v1/krc20/op/REVEAL_TX_ID
+- **Token info:** https://tn10api.kasplex.org/v1/krc20/token/ICWIN
+- **Your token balance:** https://tn10api.kasplex.org/v1/krc20/address/kaspatest:YOUR_ADDRESS/token/ICWIN
+- **All your tokens:** https://tn10api.kasplex.org/v1/krc20/address/kaspatest:YOUR_ADDRESS/tokenlist
+
+### Mint Limits
+
+Each mint operation mints the `lim` amount specified during deployment:
+- **ICWIN** example: `lim = "100000000000"` (1,000 ICWIN with 8 decimals)
+- You can mint multiple times until reaching `max` supply
+- Fee: 1 KAS per mint operation
+
+### Complete Mint Example
+
+```bash
+# 1. Check if token is mintable
+dfx canister call krc20_example getTokenInfo '("ICWIN")'
+
+# 2. Mint tokens (commit transaction)
+dfx canister call krc20_example mintTokenWithBroadcast '("ICWIN", null)'
+# Output: (variant { ok = record { commit_tx_id = "abc123..."; ... }})
+
+# 3. Wait 10 seconds...
+
+# 4. Reveal the mint
+dfx canister call krc20_example revealOperation '("abc123...", "kaspatest:YOUR_ADDRESS")'
+# Output: (variant { ok = record { reveal_tx_id = "xyz789..."; ... }})
+
+# 5. Check operation status
+dfx canister call krc20_example getOperationStatus '("xyz789...")'
+# Look for: "opAccept": "1"
+
+# 6. Verify your balance
+dfx canister call krc20_example getKRC20TokenBalance '("kaspatest:YOUR_ADDRESS", "ICWIN")'
+
+# OR see all your tokens
+dfx canister call krc20_example getKRC20TokenList '("kaspatest:YOUR_ADDRESS")'
+```
+
+## Helper Functions
+
+### Check Token Balances
+
+**Get balance for a specific token:**
+```bash
+dfx canister call krc20_example getKRC20TokenBalance '("kaspatest:YOUR_ADDRESS", "ICWIN")'
+```
+
+**Example response:**
+```json
+{
+  "tick": "ICWIN",
+  "balance": "100000000000",
+  "locked": "0",
+  "dec": "8"
+}
+```
+
+**Get all tokens you hold:**
+```bash
+dfx canister call krc20_example getKRC20TokenList '("kaspatest:YOUR_ADDRESS")'
+```
+
+**Example response:**
+```json
+{
+  "message": "successful",
+  "result": [
+    {
+      "tick": "ICWIN",
+      "balance": "100000000000",
+      "locked": "0",
+      "dec": "8"
+    }
+  ]
+}
+```
+
+### Check Token Info
+
+**Get token metadata (max supply, minted, etc.):**
+```bash
+dfx canister call krc20_example getTokenInfo '("ICWIN")'
+```
+
+### Check Operation Status
+
+**Verify if your mint/transfer/burn succeeded:**
+```bash
+dfx canister call krc20_example getOperationStatus '("REVEAL_TX_ID")'
+```
+
+Look for `"opAccept": "1"` to confirm success! ✅
+
+### Web API Endpoints
+
+**Token information:**
+```
+https://tn10api.kasplex.org/v1/krc20/token/ICWIN
+```
+
+**Operation status:**
+```
+https://tn10api.kasplex.org/v1/krc20/op/REVEAL_TX_ID
+```
+
+**Your token balance (specific):**
+```
+https://tn10api.kasplex.org/v1/krc20/address/kaspatest:YOUR_ADDRESS/token/ICWIN
+```
+
+**All your tokens (list):**
+```
+https://tn10api.kasplex.org/v1/krc20/address/kaspatest:YOUR_ADDRESS/tokenlist
+```
+
+## Other Operations
 
 ### Transfer Tokens
 
